@@ -1,0 +1,202 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-base text-white font-body;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { @apply bg-white/10 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-white/20; }
+
+  ::selection { @apply bg-violet-700/40 text-white; }
+}
+
+@layer components {
+  /* Glass card */
+  .glass-card {
+    @apply bg-white/[0.04] backdrop-blur-glass border border-white/[0.08] rounded-2xl shadow-glass;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .glass-card:hover {
+    @apply border-white/[0.14] shadow-glass-lg;
+  }
+
+  /* Glass panel (sidebar etc) */
+  .glass-panel {
+    @apply bg-[#080b18]/90 backdrop-blur-heavy border-r border-white/[0.07];
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-body
+           transition-all duration-150 cursor-pointer border select-none whitespace-nowrap;
+  }
+  .btn-primary {
+    @apply btn bg-gradient-to-br from-violet-600 to-indigo-600 text-white border-transparent
+           shadow-glow-violet hover:-translate-y-px hover:shadow-[0_0_32px_rgba(124,58,237,0.55)];
+  }
+  .btn-ghost {
+    @apply btn bg-white/[0.04] text-white/60 border-white/[0.08]
+           hover:bg-white/[0.08] hover:text-white hover:border-white/[0.16];
+  }
+  .btn-danger {
+    @apply btn bg-rose-500/10 text-rose-400 border-rose-500/25 hover:bg-rose-500/20;
+  }
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs rounded-lg;
+  }
+  .btn-icon {
+    @apply p-2 rounded-lg;
+  }
+
+  /* Input */
+  .field {
+    @apply w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-3 py-2
+           text-sm text-white placeholder-white/30 font-body
+           outline-none focus:border-violet-500/70 focus:bg-white/[0.07]
+           focus:ring-2 focus:ring-violet-500/20 transition-all duration-150;
+  }
+
+  /* Badge base */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px]
+           font-semibold font-mono tracking-wide uppercase border;
+  }
+
+  /* Status badges */
+  .badge-open    { @apply bg-violet-500/15 text-violet-300 border-violet-500/30; }
+  .badge-progress { @apply bg-amber-500/15 text-amber-300 border-amber-500/30; }
+  .badge-resolved { @apply bg-emerald-500/15 text-emerald-300 border-emerald-500/30; }
+  .badge-closed  { @apply bg-white/5 text-white/40 border-white/10; }
+
+  /* Severity badges */
+  .badge-critical { @apply bg-rose-500/15 text-rose-300 border-rose-500/30; }
+  .badge-high     { @apply bg-orange-500/15 text-orange-300 border-orange-500/30; }
+  .badge-medium   { @apply bg-amber-500/15 text-amber-300 border-amber-500/30; }
+  .badge-low      { @apply bg-emerald-500/15 text-emerald-300 border-emerald-500/30; }
+
+  /* Kanban card */
+  .kanban-card {
+    @apply bg-white/[0.03] border border-white/[0.07] rounded-xl p-3.5 cursor-pointer
+           transition-all duration-150 relative overflow-hidden;
+  }
+  .kanban-card:hover {
+    @apply bg-white/[0.07] border-white/[0.15] -translate-y-px shadow-glass;
+  }
+
+  /* Nav item */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-xl text-[13.5px] font-medium
+           text-white/50 cursor-pointer border border-transparent
+           transition-all duration-150 mb-0.5 relative;
+  }
+  .nav-item:hover {
+    @apply bg-white/[0.05] text-white border-white/[0.07];
+  }
+  .nav-item.active {
+    @apply bg-violet-600/15 text-white border-violet-500/30;
+  }
+
+  /* Skeleton */
+  .skeleton {
+    @apply rounded-lg;
+    background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s infinite;
+  }
+
+  /* Filter chip */
+  .filter-chip {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/[0.04] border border-white/[0.08]
+           rounded-full text-xs font-medium text-white/50 cursor-pointer
+           transition-all duration-150 whitespace-nowrap;
+  }
+  .filter-chip:hover {
+    @apply text-white border-white/[0.16];
+  }
+  .filter-chip.active {
+    @apply bg-violet-500/15 border-violet-500/40 text-violet-300;
+  }
+
+  /* Terminal */
+  .terminal-wrapper {
+    @apply bg-[#02040b]/95 backdrop-blur-heavy border border-white/[0.08] rounded-2xl
+           overflow-hidden shadow-glass-lg;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-violet-400 to-indigo-400;
+  }
+  .glow-dot {
+    @apply w-2 h-2 rounded-full;
+    box-shadow: 0 0 6px currentColor;
+  }
+  .font-display { font-family: 'Syne', sans-serif; }
+  .font-mono    { font-family: 'JetBrains Mono', monospace; }
+}
+
+/* Ambient background */
+#root {
+  position: relative;
+}
+#root::before {
+  content: '';
+  position: fixed;
+  top: -25%;
+  left: -15%;
+  width: 65%;
+  height: 65%;
+  background: radial-gradient(ellipse, rgba(124,58,237,0.10) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+#root::after {
+  content: '';
+  position: fixed;
+  bottom: -20%;
+  right: -10%;
+  width: 55%;
+  height: 55%;
+  background: radial-gradient(ellipse, rgba(79,70,229,0.07) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Noise overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.025'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.5;
+}
+
+/* Terminal cursor blink */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}
