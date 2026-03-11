@@ -1,48 +1,63 @@
-const ACTIVITIES = [
-  {
-    id: 1, user: 'DEV 1', action: 'changed status of', target: 'BUG-041',
-    detail: 'Open → In Progress', time: '2 min ago',
-    icon: '⟳', iconBg: 'bg-violet-500/20', iconColor: 'text-violet-300',
-  },
-  {
-    id: 2, user: 'DEV 2', action: 'commented on', target: 'BUG-038',
-    detail: '"Reproduced on v2.3.1 — looks like a race condition in the auth flow."',
-    time: '14 min ago', icon: '💬', iconBg: 'bg-cyan-500/20', iconColor: 'text-cyan-300',
-    isComment: true,
-  },
-  {
-    id: 3, user: 'DEV 3', action: 'assigned', target: 'BUG-035',
-    detail: '→ DEV 4', time: '1 hr ago',
-    icon: '👤', iconBg: 'bg-amber-500/20', iconColor: 'text-amber-300',
-  },
-  {
-    id: 4, user: 'DEV 4', action: 'opened', target: 'BUG-044',
-    detail: 'Memory leak in WebSocket handler', time: '2 hr ago',
-    icon: '+', iconBg: 'bg-rose-500/20', iconColor: 'text-rose-300',
-  },
-  {
-    id: 5, user: 'DEV 5', action: 'resolved', target: 'BUG-030',
-    detail: 'Fixed in commit #7a3c8b', time: '3 hr ago',
-    icon: '✓', iconBg: 'bg-emerald-500/20', iconColor: 'text-emerald-300',
-  },
-  {
-    id: 6, user: 'DEV 1', action: 'mentioned you in', target: 'BUG-033',
-    detail: '"@alex can you verify the fix on staging?"', time: '5 hr ago',
-    icon: '@', iconBg: 'bg-indigo-500/20', iconColor: 'text-indigo-300',
-    isComment: true,
-  },
-];
+import { useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '../../lib/api';
 
-const ActivityFeed = () => (
-  <div className="flex flex-col">
-    {ACTIVITIES.map((item, idx) => (
+const iconMap = {
+  open:    { icon:'+', iconBg:'bg-rose-500/20', iconColor:'text-rose-300' },
+  comment: { icon:'💬', iconBg:'bg-cyan-500/20', iconColor:'text-cyan-300', isComment:true },
+};
+
+const timeAgo = (dateString) => {
+  const d = new Date(dateString);
+  if (Number.isNaN(d.getTime())) return 'just now';
+  const diff = Math.max(0, Date.now() - d.getTime());
+  const min = Math.round(diff / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr} hr ago`;
+  const day = Math.round(hr / 24);
+  return `${day}d ago`;
+};
+
+const ActivityFeed = () => {
+  const [items, setItems] = useState([]);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    apiFetch('/api/activity?limit=12')
+      .then(data => { if (active) setItems(Array.isArray(data) ? data : []); })
+      .catch(() => { if (active) setError('Failed to load activity'); });
+    return () => { active = false; };
+  }, []);
+
+  const mapped = useMemo(() => items.map((item, idx) => {
+    const meta = iconMap[item.kind] || iconMap.open;
+    return {
+      id: `${item.target}-${idx}`,
+      user: item.user_name,
+      action: item.action,
+      target: item.target,
+      detail: item.detail,
+      time: timeAgo(item.created),
+      ...meta
+    };
+  }), [items]);
+
+  if (error) {
+    return <div className="text-[11px] text-rose-300/80">{error}</div>;
+  }
+
+  return (
+    <div className="flex flex-col">
+      {mapped.map((item, idx) => (
       <div
         key={item.id}
         className="activity-item flex gap-3 py-3 relative animate-fade-up"
         style={{ animationDelay: `${idx * 55}ms` }}
       >
         {/* Connector line */}
-        {idx < ACTIVITIES.length - 1 && (
+        {idx < mapped.length - 1 && (
           <div className="absolute left-[14px] top-11 bottom-0 w-px bg-white/[0.05]" />
         )}
 
@@ -71,7 +86,11 @@ const ActivityFeed = () => (
         </div>
       </div>
     ))}
-  </div>
-);
+      {mapped.length === 0 && (
+        <div className="text-[11px] text-white/30 py-6">No recent activity</div>
+      )}
+    </div>
+  );
+};
 
 export default ActivityFeed;

@@ -1,17 +1,20 @@
 import { useState, useRef, useEffect } from 'react';
-
-/* ── Command processor ──────────────────────────────────── */
-const BUGS = [
-  { id:'BUG-044', title:'Memory leak in WebSocket handler',          sev:'critical', status:'open',        by:'DEV 1'  },
-  { id:'BUG-043', title:'Login redirect loop on OAuth callback',     sev:'high',     status:'in_progress', by:'DEV 2'    },
-  { id:'BUG-041', title:'Race condition in concurrent file uploads', sev:'high',     status:'in_progress', by:'DEV 3'     },
-  { id:'BUG-038', title:'Dashboard chart blank on Safari 17',        sev:'medium',   status:'open',        by:'DEV 4'   },
-  { id:'BUG-033', title:'Tooltip overflows viewport on mobile',      sev:'low',      status:'open',        by:'DEV 5'        },
-];
+import { apiFetch } from '../../lib/api';
+import { useAuth } from '../../context/AuthContext';
 
 const SUGGESTIONS = ['bug list','bug create','bug close ','bug assign ','bug status ','bug comment ','help','whoami','version','clear'];
 
-function process(raw) {
+const CREATE_STEPS = [
+  { key: 'title',       prompt: 'Title:', required: true },
+  { key: 'description', prompt: 'Description (optional):', required: false },
+  { key: 'severity',    prompt: 'Severity (critical/high/medium/low, default: medium):', required: false },
+  { key: 'priority',    prompt: 'Priority (P0/P1/P2/P3, default: P2):', required: false },
+  { key: 'assignee',    prompt: 'Assign to (username, optional):', required: false },
+  { key: 'tags',        prompt: 'Tags (comma separated, optional):', required: false },
+  { key: 'comment',     prompt: 'Initial comment (optional):', required: false },
+];
+
+async function process(raw, { token, user }) {
   const cmd = raw.trim().toLowerCase();
 
   if (cmd === 'clear') return { clear: true };
@@ -22,11 +25,11 @@ function process(raw) {
     { t:'header',  v:'  COMMAND              DESCRIPTION' },
     { t:'divider' },
     { t:'mono',    v:'  bug list            List all open bugs' },
-    { t:'mono',    v:'  bug create          Create a new bug report' },
+    { t:'mono',    v:'  bug create          Create a new bug report (guided)' },
     { t:'mono',    v:'  bug status <ID>     Get bug status' },
     { t:'mono',    v:'  bug close <ID>      Close a bug' },
     { t:'mono',    v:'  bug assign <ID> --to <user>   Assign to team member' },
-    { t:'mono',    v:'  bug comment <ID> "text"       Add a comment' },
+    { t:'mono',    v:'  bug comment <ID> \"text\"       Add a comment' },
     { t:'mono',    v:'  whoami              Show current user' },
     { t:'mono',    v:'  version             Show CLI version' },
     { t:'mono',    v:'  clear               Clear terminal' },
@@ -34,12 +37,19 @@ function process(raw) {
     { t:'muted',   v:"  Tip: Use ↑↓ for history, Tab for autocomplete." },
   ]};
 
-  if (cmd === 'whoami') return { lines:[
-    { t:'info',    v:'  Logged in as: DEV 1'       },
-    { t:'text',    v:'  Role:         Admin'           },
-    { t:'text',    v:'  Workspace:    BugTrack / Prod' },
-    { t:'success', v:'  Session:      Active (6h)'     },
-  ]};
+  if (cmd === 'whoami') {
+    if (!user) {
+      return { lines:[
+        { t:'warn',    v:'  Not authenticated.' },
+        { t:'muted',   v:'  Sign in from the sidebar to enable protected actions.' },
+      ]};
+    }
+    return { lines:[
+      { t:'info',    v:`  Logged in as: ${user.username}` },
+      { t:'text',    v:`  Email:       ${user.email || '—'}` },
+      { t:'success', v:'  Session:     Active' },
+    ]};
+  }
 
   if (cmd === 'version') return { lines:[
     { t:'success', v:'  bugtrack-cli 1.1.0'  },
@@ -47,72 +57,85 @@ function process(raw) {
     { t:'muted',   v:'  platform: linux/x64' },
   ]};
 
-  if (cmd === 'bug list') return { lines:[
-    { t:'header',  v:`  ${'ID'.padEnd(10)} ${'TITLE'.padEnd(42)} ${'SEV'.padEnd(10)} STATUS` },
-    { t:'divider' },
-    ...BUGS.map(b => ({ t:'mono', v:`  ${b.id.padEnd(10)} ${b.title.slice(0,40).padEnd(42)} ${b.sev.padEnd(10)} ${b.status}` })),
-    { t:'blank' },
-    { t:'muted',   v:`  ${BUGS.length} bugs listed.` },
-  ]};
+  if (cmd === 'bug list') {
+    const bugs = await apiFetch('/api/issues?status=open');
+    return { lines:[
+      { t:'header',  v:`  ${'ID'.padEnd(10)} ${'TITLE'.padEnd(42)} ${'SEV'.padEnd(10)} STATUS` },
+      { t:'divider' },
+      ...bugs.map(b => ({ t:'mono', v:`  ${b.id.padEnd(10)} ${String(b.title).slice(0,40).padEnd(42)} ${b.severity.padEnd(10)} ${b.status}` })),
+      { t:'blank' },
+      { t:'muted',   v:`  ${bugs.length} bugs listed.` },
+    ]};
+  }
 
   if (cmd.startsWith('bug status ')) {
     const id = raw.trim().split(' ')[2]?.toUpperCase();
-    const b  = BUGS.find(x => x.id === id);
-    if (!b) return { lines:[{ t:'error', v:`  Error: ${id} not found.` }] };
+    const b = await apiFetch(`/api/issues/${id}`);
     return { lines:[
       { t:'info',    v:`  ${b.id}`                        },
       { t:'text',    v:`  Title:    ${b.title}`           },
-      { t:'text',    v:`  Severity: ${b.sev}`             },
+      { t:'text',    v:`  Severity: ${b.severity}`        },
       { t:'success', v:`  Status:   ${b.status}`          },
-      { t:'text',    v:`  Assignee: ${b.by ?? 'unassigned'}` },
+      { t:'text',    v:`  Assignee: ${b.assignee ?? 'unassigned'}` },
     ]};
   }
 
   if (cmd.startsWith('bug close ')) {
+    if (!token) return { lines:[{ t:'warn', v:'  Sign in required to close bugs.' }] };
     const id = raw.trim().split(' ')[2]?.toUpperCase();
-    const b  = BUGS.find(x => x.id === id);
-    if (!b) return { lines:[{ t:'error', v:`  Error: ${id} not found.` }] };
+    await apiFetch(`/api/issues/${id}`, {
+      method: 'PATCH',
+      token,
+      body: JSON.stringify({ status: 'closed' })
+    });
     return { lines:[
-      { t:'success', v:`  ✓ ${b.id} marked as closed.`              },
+      { t:'success', v:`  ✓ ${id} marked as closed.` },
       { t:'muted',   v:'  Status update logged to activity timeline.' },
     ]};
   }
 
   if (cmd.startsWith('bug assign ')) {
+    if (!token) return { lines:[{ t:'warn', v:'  Sign in required to assign bugs.' }] };
     const parts = raw.trim().split(' ');
     const id    = parts[2]?.toUpperCase();
     const toIdx = parts.map(p=>p.toLowerCase()).indexOf('--to');
-    const user  = toIdx >= 0 ? parts[toIdx+1] : null;
-    if (!id || !user) return { lines:[{ t:'warn', v:'  Usage: bug assign <ID> --to <username>' }] };
+    const username  = toIdx >= 0 ? parts[toIdx+1] : null;
+    if (!id || !username) return { lines:[{ t:'warn', v:'  Usage: bug assign <ID> --to <username>' }] };
+    const users = await apiFetch('/api/users', { token });
+    const match = users.find(u => u.username.toLowerCase() === username.toLowerCase());
+    if (!match) return { lines:[{ t:'error', v:`  User not found: ${username}` }] };
+    await apiFetch(`/api/issues/${id}`, {
+      method: 'PATCH',
+      token,
+      body: JSON.stringify({ assigneeId: match.id })
+    });
     return { lines:[
-      { t:'success', v:`  ✓ ${id} assigned to @${user}` },
-      { t:'muted',   v:'  Notification sent.'           },
+      { t:'success', v:`  ✓ ${id} assigned to @${username}` },
+      { t:'muted',   v:'  Notification sent.' },
     ]};
   }
 
-  if (cmd.startsWith('bug create')) return { lines:[
-    { t:'success', v:'  ✓ Bug created: BUG-045'                       },
-    { t:'text',    v:'  Status:   open'                               },
-    { t:'text',    v:'  Reporter: DEV 1'                           },
-    { t:'muted',   v:`  Created:  ${new Date().toLocaleString()}`     },
-  ]};
-
   if (cmd.startsWith('bug comment ')) {
-    const m = raw.trim().match(/bug comment (BUG-\d+) (.+)/i);
-    if (!m) return { lines:[{ t:'warn', v:'  Usage: bug comment <ID> "text"' }] };
+    if (!token) return { lines:[{ t:'warn', v:'  Sign in required to comment.' }] };
+    const m = raw.trim().match(/bug comment (BUG-\\d+) (.+)/i);
+    if (!m) return { lines:[{ t:'warn', v:'  Usage: bug comment <ID> \"text\"' }] };
+    await apiFetch(`/api/issues/${m[1].toUpperCase()}/comments`, {
+      method: 'POST',
+      token,
+      body: JSON.stringify({ comment: m[2] })
+    });
     return { lines:[
       { t:'success', v:`  ✓ Comment added to ${m[1].toUpperCase()}` },
-      { t:'muted',   v:`  Comment: ${m[2]}`                         },
+      { t:'muted',   v:`  Comment: ${m[2]}` },
     ]};
   }
 
   return { lines:[
-    { t:'error', v:`  Command not found: '${raw.trim()}'`      },
+    { t:'error', v:`  Command not found: '${raw.trim()}'` },
     { t:'muted', v:"  Run 'help' to see available commands." },
   ]};
 }
 
-/* ── Color map ─────────────────────────────────────────── */
 const LINE_STYLE = {
   success: 'text-emerald-400',
   error:   'text-rose-400',
@@ -140,15 +163,16 @@ const BOOT = [
   { t:'blank' },
 ];
 
-/* ── Terminal ───────────────────────────────────────────── */
 const Terminal = () => {
   const [history, setHistory]     = useState([{ cmd:null, lines:BOOT }]);
   const [input, setInput]         = useState('');
   const [cmdHist, setCmdHist]     = useState([]);
   const [histIdx, setHistIdx]     = useState(-1);
   const [ghost, setGhost]         = useState('');
+  const [createFlow, setCreateFlow] = useState(null);
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
+  const { token, user } = useAuth();
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:'smooth' }); }, [history]);
 
@@ -160,13 +184,172 @@ const Terminal = () => {
     setGhost(match ? match.slice(val.length) : '');
   };
 
-  const submit = () => {
-    if (!input.trim()) return;
-    const result = process(input);
-    if (result.clear) {
-      setHistory([{ cmd:null, lines:BOOT }]);
+  const appendLines = (cmd, lines) => {
+    setHistory(h => [...h, { cmd, lines }]);
+  };
+
+  const startCreateFlow = () => {
+    setCreateFlow({ step: 0, data: {} });
+    appendLines(input.trim(), [
+      { t:'info', v:'  Starting guided issue creation…' },
+      { t:'text', v:`  ${CREATE_STEPS[0].prompt}` },
+    ]);
+  };
+
+  const handleCreateAnswer = async (answer) => {
+    const step = CREATE_STEPS[createFlow.step];
+    const data = { ...createFlow.data };
+    const trimmed = answer.trim();
+
+    if (step.required && !trimmed) {
+      appendLines(answer.trim(), [
+        { t:'warn', v:`  ${step.key} is required.` },
+        { t:'text', v:`  ${step.prompt}` },
+      ]);
+      return;
+    }
+
+    if (step.key === 'severity') {
+      const val = trimmed ? trimmed.toLowerCase() : 'medium';
+      if (!['critical','high','medium','low'].includes(val)) {
+        appendLines(answer.trim(), [
+          { t:'warn', v:'  Invalid severity. Use critical/high/medium/low.' },
+          { t:'text', v:`  ${step.prompt}` },
+        ]);
+        return;
+      }
+      data.severity = val;
+    } else if (step.key === 'priority') {
+      const val = trimmed ? trimmed.toUpperCase() : 'P2';
+      if (!['P0','P1','P2','P3'].includes(val)) {
+        appendLines(answer.trim(), [
+          { t:'warn', v:'  Invalid priority. Use P0/P1/P2/P3.' },
+          { t:'text', v:`  ${step.prompt}` },
+        ]);
+        return;
+      }
+      data.priority = val;
+    } else if (step.key === 'assignee') {
+      data.assignee = trimmed || '';
+    } else if (step.key === 'tags') {
+      data.tags = trimmed;
+    } else if (step.key === 'comment') {
+      data.comment = trimmed;
     } else {
-      setHistory(h => [...h, { cmd:input.trim(), lines:result.lines }]);
+      data[step.key] = trimmed;
+    }
+
+    const nextStep = createFlow.step + 1;
+    if (nextStep >= CREATE_STEPS.length) {
+      if (!token) {
+        appendLines(answer.trim(), [
+          { t:'warn', v:'  Sign in required to create bugs.' },
+        ]);
+        setCreateFlow(null);
+        return;
+      }
+
+      try {
+        let assigneeId = null;
+        if (data.assignee) {
+          const users = await apiFetch('/api/users', { token });
+          const match = users.find(u => u.username.toLowerCase() === data.assignee.toLowerCase());
+          if (!match) {
+            appendLines(answer.trim(), [
+              { t:'warn', v:`  User not found: ${data.assignee}` },
+              { t:'text', v:'  Please re-enter assignee (or leave blank):' },
+            ]);
+            setCreateFlow({ step: CREATE_STEPS.findIndex(s => s.key === 'assignee'), data });
+            return;
+          }
+          assigneeId = match.id;
+        }
+
+        const tags = data.tags ? data.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+        const created = await apiFetch('/api/issues', {
+          method: 'POST',
+          token,
+          body: JSON.stringify({
+            title: data.title,
+            description: data.description || null,
+            severity: data.severity || 'medium',
+            priority: data.priority || 'P2',
+            assigneeId,
+            tags
+          })
+        });
+
+        if (data.comment) {
+          await apiFetch(`/api/issues/${created.id}/comments`, {
+            method: 'POST',
+            token,
+            body: JSON.stringify({ comment: data.comment })
+          });
+        }
+
+        appendLines(answer.trim(), [
+          { t:'success', v:`  ✓ Bug created: ${created.id}` },
+          { t:'text',    v:`  Status:   ${created.status}` },
+          { t:'text',    v:`  Reporter: ${user?.username || '—'}` },
+          { t:'muted',   v:`  Created:  ${new Date().toLocaleString()}` },
+        ]);
+      } catch (err) {
+        appendLines(answer.trim(), [
+          { t:'error', v:`  ${err.message || 'Failed to create issue'}` },
+        ]);
+      } finally {
+        setCreateFlow(null);
+      }
+      return;
+    }
+
+    setCreateFlow({ step: nextStep, data });
+    appendLines(answer.trim(), [
+      { t:'text', v:`  ${CREATE_STEPS[nextStep].prompt}` },
+    ]);
+  };
+
+  const submit = async () => {
+    if (!input.trim()) return;
+
+    if (createFlow) {
+      const answer = input;
+      setInput('');
+      setGhost('');
+      await handleCreateAnswer(answer);
+      return;
+    }
+
+    if (input.trim().toLowerCase().startsWith('bug create')) {
+      if (!token) {
+        appendLines(input.trim(), [
+          { t:'warn', v:'  Sign in required to create bugs.' },
+        ]);
+        setCmdHist(h => [input.trim(), ...h]);
+        setHistIdx(-1);
+        setInput('');
+        setGhost('');
+        return;
+      }
+      startCreateFlow();
+      setCmdHist(h => [input.trim(), ...h]);
+      setHistIdx(-1);
+      setInput('');
+      setGhost('');
+      return;
+    }
+
+    try {
+      const result = await process(input, { token, user });
+      if (result.clear) {
+        setHistory([{ cmd:null, lines:BOOT }]);
+      } else {
+        appendLines(input.trim(), result.lines);
+      }
+    } catch (err) {
+      appendLines(input.trim(), [
+        { t:'error', v:`  ${err.message || 'Command failed'}` },
+      ]);
     }
     setCmdHist(h => [input.trim(), ...h]);
     setHistIdx(-1);
@@ -183,7 +366,6 @@ const Terminal = () => {
 
   return (
     <div className="terminal-wrapper">
-      {/* Title bar */}
       <div className="flex items-center gap-2 px-4 py-2.5 bg-white/[0.025] border-b border-white/[0.07]">
         <span className="w-3 h-3 rounded-full bg-[#ff5f57]"/>
         <span className="w-3 h-3 rounded-full bg-[#febc2e]"/>
@@ -193,7 +375,6 @@ const Terminal = () => {
         </span>
       </div>
 
-      {/* Output area */}
       <div
         className="h-[420px] overflow-y-auto p-5 font-mono text-[12.5px] leading-relaxed cursor-text"
         onClick={() => inputRef.current?.focus()}
@@ -220,40 +401,26 @@ const Terminal = () => {
         <div ref={bottomRef}/>
       </div>
 
-      {/* Input row */}
-      <div className="flex items-center gap-1.5 border-t border-white/[0.07] px-5 py-3 bg-black/20">
+      <div className="border-t border-white/[0.07] px-5 py-3 flex items-center gap-2">
         <span className="text-violet-400 font-semibold text-[11px] font-mono whitespace-nowrap">dev@bugtrack</span>
-        <span className="text-cyan-500/70 text-[11px] font-mono">~/workspace</span>
-        <span className="text-white/25 text-[11px] font-mono mx-1">$</span>
-
-        <div className="relative flex-1">
+        <span className="text-cyan-500/70 text-[11px] font-mono whitespace-nowrap">~/workspace</span>
+        <span className="text-white/25 text-[11px]">$</span>
+        <div className="flex-1 relative">
           <input
             ref={inputRef}
-            className="w-full bg-transparent outline-none border-none text-white font-mono text-[12.5px]
-                       caret-violet-400"
             value={input}
             onChange={e => handleChange(e.target.value)}
             onKeyDown={onKeyDown}
-            autoFocus
-            spellCheck={false}
+            className="w-full bg-transparent outline-none text-white text-[12px] font-mono"
             autoComplete="off"
+            spellCheck={false}
           />
           {ghost && (
-            <span
-              className="absolute left-0 top-0 text-white/20 font-mono text-[12.5px] pointer-events-none whitespace-pre"
-              style={{ paddingLeft: `${input.length}ch` }}
-            >
-              {ghost}
+            <span className="absolute left-0 top-0 text-white/20 text-[12px] font-mono pointer-events-none">
+              {input}{ghost}
             </span>
           )}
         </div>
-      </div>
-
-      {/* Hints */}
-      <div className="flex gap-5 px-5 py-1.5 border-t border-white/[0.05] bg-black/10 flex-wrap">
-        {['↑↓ history','Tab autocomplete','Enter run',"'help' for commands"].map(h => (
-          <span key={h} className="text-[9px] font-mono text-white/18">{h}</span>
-        ))}
       </div>
     </div>
   );

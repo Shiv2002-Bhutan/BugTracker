@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import KanbanColumn from './KanbanColumn';
+import { apiFetch } from '../../lib/api';
 
 const COLUMNS = [
   { id:'open',     label:'Open' },
@@ -8,26 +9,44 @@ const COLUMNS = [
   { id:'closed',   label:'Closed' },
 ];
 
-const ALL_CARDS = [
-  { id:'BUG-044', title:'Memory leak in WebSocket handler',           severity:'critical', status:'open',     assignee:'DEV 1',   commentCount:3 },
-  { id:'BUG-038', title:'Dashboard chart blank on Safari 17',         severity:'medium',   status:'open',     assignee:'DEV 2',  commentCount:5 },
-  { id:'BUG-033', title:'Tooltip overflows viewport on mobile',       severity:'low',      status:'open',     assignee:null,         commentCount:1 },
-  { id:'BUG-031', title:'Sort order resets after page refresh',       severity:'low',      status:'open',     assignee:null,         commentCount:0 },
-  { id:'BUG-043', title:'Login redirect loop on OAuth callback',      severity:'high',     status:'progress', assignee:'DEV 3',   commentCount:7 },
-  { id:'BUG-041', title:'Race condition in concurrent file uploads',  severity:'high',     status:'progress', assignee:'DEV 4',    commentCount:4 },
-  { id:'BUG-035', title:'CSV export drops timezone offset',           severity:'medium',   status:'progress', assignee:'DEV 5', commentCount:2 },
-  { id:'BUG-029', title:'API rate limiter not resetting correctly',   severity:'medium',   status:'progress', assignee:'DEV 6',   commentCount:6 },
-  { id:'BUG-030', title:'Email notifications sent twice on retry',    severity:'high',     status:'resolved', assignee:'DEV 7',   commentCount:8 },
-  { id:'BUG-028', title:'Search index out of sync after bulk delete', severity:'critical', status:'resolved', assignee:'DEV 8',    commentCount:11 },
-  { id:'BUG-027', title:'Incorrect totals in billing summary',        severity:'medium',   status:'resolved', assignee:'DEV 9', commentCount:3 },
-  { id:'BUG-025', title:'Session expires silently without feedback',  severity:'medium',   status:'closed',   assignee:'DEV 10',  commentCount:4 },
-  { id:'BUG-020', title:'Pagination resets on filter change',         severity:'low',      status:'closed',   assignee:'DEV 11', commentCount:2 },
-];
-
 const KanbanBoard = () => {
   const [sevFilter, setSevFilter] = useState('all');
+  const [cards, setCards] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const visible = ALL_CARDS.filter(c => sevFilter === 'all' || c.severity === sevFilter);
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError('');
+        const data = await apiFetch('/api/issues');
+        const normalized = Array.isArray(data) ? data : [];
+        if (active) {
+          setCards(normalized.map(i => ({
+            id: i.id,
+            title: i.title,
+            severity: i.severity,
+            status: i.status,
+            assignee: i.assignee,
+            commentCount: 0
+          })));
+        }
+      } catch (err) {
+        if (active) setError('Failed to load issues');
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, []);
+
+  const visible = useMemo(
+    () => cards.filter(c => sevFilter === 'all' || c.severity === sevFilter),
+    [cards, sevFilter]
+  );
 
   return (
     <div>
@@ -48,13 +67,23 @@ const KanbanBoard = () => {
 
       {/* Board */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 pb-4">
-        {COLUMNS.map(col => (
-          <KanbanColumn
-            key={col.id}
-            column={col}
-            cards={visible.filter(c => c.status === col.id)}
-          />
-        ))}
+        {loading ? (
+          <div className="col-span-full text-center text-white/30 font-mono text-[11px] py-10">
+            Loading board…
+          </div>
+        ) : error ? (
+          <div className="col-span-full text-center text-rose-300/80 font-mono text-[11px] py-10">
+            {error}
+          </div>
+        ) : (
+          COLUMNS.map(col => (
+            <KanbanColumn
+              key={col.id}
+              column={col}
+              cards={visible.filter(c => c.status === col.id)}
+            />
+          ))
+        )}
       </div>
     </div>
   );

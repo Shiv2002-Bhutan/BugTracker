@@ -1,21 +1,9 @@
-import { useState } from 'react';
-
-const ISSUES = [
-  { id:'BUG-044', title:'Memory leak in WebSocket handler',           severity:'critical', status:'open',     priority:'P0', assignee:'DEV1',   reporter:'DEV10',   created:'Mar 9, 2026',  tags:['backend','perf'] },
-  { id:'BUG-043', title:'Login redirect loop on OAuth callback',      severity:'high',     status:'progress', priority:'P1', assignee:'DEV 2',   reporter:'DEV10',  created:'Mar 8, 2026',  tags:['auth','frontend'] },
-  { id:'BUG-041', title:'Race condition in concurrent file uploads',  severity:'high',     status:'progress', priority:'P1', assignee:'DEV 3',    reporter:'DEV 12',    created:'Mar 7, 2026',  tags:['backend','storage'] },
-  { id:'BUG-038', title:'Dashboard chart blank on Safari 17',         severity:'medium',   status:'open',     priority:'P2', assignee:'DEV 4',  reporter:'DEV1',    created:'Mar 6, 2026',  tags:['frontend','browser'] },
-  { id:'BUG-035', title:'CSV export drops timezone offset',           severity:'medium',   status:'progress', priority:'P2', assignee:'DEV 5', reporter:'DEV10',     created:'Mar 5, 2026',  tags:['export','data'] },
-  { id:'BUG-033', title:'Tooltip overflows viewport on mobile',       severity:'low',      status:'open',     priority:'P3', assignee:'DEV 7',         reporter:'DEV10',   created:'Mar 4, 2026',  tags:['mobile','ui'] },
-  { id:'BUG-030', title:'Email notifications sent twice on retry',    severity:'high',     status:'resolved', priority:'P1', assignee:'DEV 6',   reporter:'DEV10',    created:'Mar 2, 2026',  tags:['notifications'] },
-  { id:'BUG-028', title:'Search index out of sync after bulk delete', severity:'critical', status:'resolved', priority:'P0', assignee:'DEV 8',    reporter:'DEV10',  created:'Feb 28, 2026', tags:['search','data'] },
-  { id:'BUG-025', title:'Session expires silently without feedback',  severity:'medium',   status:'closed',   priority:'P2', assignee:'DEV 9',  reporter:'DEV10',    created:'Feb 25, 2026', tags:['auth','ux'] },
-  { id:'BUG-020', title:'Pagination resets on filter change',         severity:'low',      status:'closed',   priority:'P3', assignee:'DEV 10', reporter:'DEV10',    created:'Feb 20, 2026', tags:['ui','frontend'] },
-];
+import { useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '../../lib/api';
+import { useAuth } from '../../context/AuthContext';
 
 const SEV_ORDER = { critical:0, high:1, medium:2, low:3 };
 
-/* ─ Badges ─ */
 const StatusBadge = ({ status }) => {
   const map = { open:['badge-open','Open'], progress:['badge-progress','In Progress'], resolved:['badge-resolved','Resolved'], closed:['badge-closed','Closed'] };
   const [cls, lbl] = map[status] || ['badge-closed', status];
@@ -42,17 +30,90 @@ const Avatar = ({ name, size=22 }) => {
   );
 };
 
-const IssuesTable = () => {
+const IssuesTable = ({ refreshKey = 0 }) => {
+  const { token } = useAuth();
+  const [issues, setIssues] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [users, setUsers] = useState([]);
+  const [busyId, setBusyId] = useState(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editIssue, setEditIssue] = useState(null);
+  const [editForm, setEditForm] = useState({
+    title: '',
+    description: '',
+    severity: '',
+    status: '',
+    priority: '',
+    assigneeId: '',
+    tags: ''
+  });
+  const [reloadTick, setReloadTick] = useState(0);
+
   const [search, setSearch]           = useState('');
   const [statusF, setStatusF]         = useState('all');
   const [severityF, setSeverityF]     = useState('all');
   const [sortKey, setSortKey]         = useState('severity');
 
-  const filtered = ISSUES
+  useEffect(() => {
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        setLoading(true);
+        setLoadError('');
+        const data = await apiFetch('/api/issues', { signal: controller.signal });
+        const normalized = Array.isArray(data) ? data : [];
+        setIssues(normalized);
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          console.error(err);
+          setLoadError('Failed to load issues');
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+    return () => controller.abort();
+  }, [refreshKey, reloadTick]);
+
+  useEffect(() => {
+    if (!token) {
+      setUsers([]);
+      return;
+    }
+    apiFetch('/api/users', { token })
+      .then(data => setUsers(Array.isArray(data) ? data : []))
+      .catch(() => setUsers([]));
+  }, [token]);
+
+  const formattedIssues = useMemo(() => issues.map(issue => {
+    const createdDate = issue.created ? new Date(issue.created) : null;
+    const created = createdDate && !Number.isNaN(createdDate.getTime())
+      ? createdDate.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+      : '—';
+
+    return {
+      ...issue,
+      title: issue.title ?? '',
+      id: issue.id ?? '',
+      status: issue.status ? String(issue.status).toLowerCase() : '',
+      severity: issue.severity ? String(issue.severity).toLowerCase() : '',
+      tags: Array.isArray(issue.tags) ? issue.tags : [],
+      created
+    };
+  }), [issues]);
+
+  const filtered = formattedIssues
     .filter(i => {
       if (statusF !== 'all' && i.status !== statusF) return false;
       if (severityF !== 'all' && i.severity !== severityF) return false;
-      if (search && !i.title.toLowerCase().includes(search.toLowerCase()) && !i.id.toLowerCase().includes(search.toLowerCase())) return false;
+      if (search) {
+        const q = search.toLowerCase();
+        if (!String(i.title).toLowerCase().includes(q) && !String(i.id).toLowerCase().includes(q)) return false;
+      }
       return true;
     })
     .sort((a, b) => sortKey === 'severity' ? SEV_ORDER[a.severity] - SEV_ORDER[b.severity]
@@ -61,9 +122,12 @@ const IssuesTable = () => {
 
   return (
     <div>
-      {/* ── Toolbar ── */}
+      {actionError && (
+        <div className="mb-3 text-[11px] text-rose-300/80 bg-rose-500/10 border border-rose-500/30 rounded-lg px-3 py-2">
+          {actionError}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2 mb-5">
-        {/* Search */}
         <div className="relative">
           <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/25"
             viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -73,7 +137,6 @@ const IssuesTable = () => {
             value={search} onChange={e => setSearch(e.target.value)}/>
         </div>
 
-        {/* Status chips */}
         <div className="flex gap-1.5 flex-wrap">
           {['all','open','progress','resolved','closed'].map(s => (
             <button key={s} className={`filter-chip ${statusF===s?'active':''}`} onClick={()=>setStatusF(s)}>
@@ -82,7 +145,6 @@ const IssuesTable = () => {
           ))}
         </div>
 
-        {/* Severity chips */}
         <div className="flex gap-1.5 flex-wrap">
           {['all','critical','high','medium','low'].map(s => (
             <button key={s} className={`filter-chip ${severityF===s?'active':''}`} onClick={()=>setSeverityF(s)}>
@@ -91,7 +153,6 @@ const IssuesTable = () => {
           ))}
         </div>
 
-        {/* Sort */}
         <div className="flex items-center gap-2 ml-auto">
           <span className="text-[10px] font-mono text-white/25">Sort:</span>
           <select className="field select w-32 text-xs" value={sortKey} onChange={e=>setSortKey(e.target.value)}>
@@ -102,13 +163,23 @@ const IssuesTable = () => {
         </div>
       </div>
 
-      {/* ── Table ── */}
       <div className="glass-card overflow-hidden">
         <div className="overflow-x-auto">
+          {loading ? (
+            <div className="py-16 text-center">
+              <p className="font-display font-bold text-white/30 mb-1">Loading issues…</p>
+              <p className="text-xs text-white/20">Fetching from the API</p>
+            </div>
+          ) : loadError ? (
+            <div className="py-16 text-center">
+              <p className="font-display font-bold text-white/30 mb-1">{loadError}</p>
+              <p className="text-xs text-white/20">Check the backend server</p>
+            </div>
+          ) : (
           <table className="w-full border-collapse">
             <thead>
               <tr>
-                {['ID','Title','Severity','Status','Priority','Assignee','Tags','Created'].map(h => (
+                {['ID','Title','Severity','Status','Priority','Assignee','Tags','Created','Actions'].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-[9px] font-mono font-semibold
                                          tracking-[0.1em] uppercase text-white/25
                                          border-b border-white/[0.06] whitespace-nowrap">
@@ -120,7 +191,7 @@ const IssuesTable = () => {
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={9}>
                     <div className="py-16 text-center">
                       <p className="text-3xl opacity-30 mb-3">🔍</p>
                       <p className="font-display font-bold text-white/30 mb-1">No issues found</p>
@@ -166,16 +237,108 @@ const IssuesTable = () => {
                   <td className="px-4 py-3 text-[11px] font-mono text-white/25 whitespace-nowrap">
                     {issue.created}
                   </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        disabled={!token}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!token) return;
+                          try {
+                            setBusyId(issue.id);
+                            setActionError('');
+                            const data = await apiFetch(`/api/issues/${issue.id}`, { token });
+                            setEditIssue(data);
+                            setEditForm({
+                              title: data.title || '',
+                              description: data.description || '',
+                              severity: data.severity || '',
+                              status: data.status || '',
+                              priority: data.priority || '',
+                              assigneeId: '',
+                              tags: Array.isArray(data.tags) ? data.tags.join(', ') : ''
+                            });
+                            setEditOpen(true);
+                          } catch (err) {
+                            setActionError(err.message || 'Failed to load issue');
+                          } finally {
+                            setBusyId(null);
+                          }
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        disabled={!token}
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!token) return;
+                          try {
+                            setBusyId(issue.id);
+                            setActionError('');
+                            const nextStatus = issue.status === 'closed' ? 'open' : 'closed';
+                            await apiFetch(`/api/issues/${issue.id}`, {
+                              method: 'PATCH',
+                              token,
+                              body: JSON.stringify({ status: nextStatus })
+                            });
+                            setReloadTick(t => t + 1);
+                          } catch (err) {
+                            setActionError(err.message || 'Failed to update status');
+                          } finally {
+                            setBusyId(null);
+                          }
+                        }}
+                      >
+                        {issue.status === 'closed' ? 'Reopen' : 'Close'}
+                      </button>
+                      <select
+                        className="field select w-28 text-[10px]"
+                        disabled={!token || users.length === 0}
+                        value=""
+                        onChange={async (e) => {
+                          e.stopPropagation();
+                          if (!token) return;
+                          const value = e.target.value;
+                          if (!value) return;
+                          try {
+                            setBusyId(issue.id);
+                            setActionError('');
+                            await apiFetch(`/api/issues/${issue.id}`, {
+                              method: 'PATCH',
+                              token,
+                              body: JSON.stringify({ assigneeId: Number(value) })
+                            });
+                            setReloadTick(t => t + 1);
+                          } catch (err) {
+                            setActionError(err.message || 'Failed to assign');
+                          } finally {
+                            setBusyId(null);
+                          }
+                        }}
+                      >
+                        <option value="">Assign</option>
+                        {users.map(u => (
+                          <option key={u.id} value={u.id}>{u.username}</option>
+                        ))}
+                      </select>
+                      {busyId === issue.id && (
+                        <span className="text-[10px] text-white/30 font-mono">…</span>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          )}
         </div>
 
-        {/* Pagination footer */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-white/[0.06] flex-wrap gap-2">
           <span className="text-[11px] font-mono text-white/25">
-            {filtered.length} of {ISSUES.length} issues
+            {filtered.length} of {formattedIssues.length} issues
           </span>
           <div className="flex gap-1">
             {[1,2,3].map(p => (
@@ -191,6 +354,165 @@ const IssuesTable = () => {
           </div>
         </div>
       </div>
+
+      {editOpen && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-md z-[500] flex items-center
+                     justify-center p-4 animate-fade-up"
+          onClick={e => { if (e.target === e.currentTarget) setEditOpen(false); }}
+        >
+          <div className="glass-card w-full max-w-lg overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.07]">
+              <span className="font-display font-bold text-[15px] text-white tracking-tight">
+                Edit Issue {editIssue?.id || ''}
+              </span>
+              <button className="btn btn-ghost btn-icon" onClick={() => setEditOpen(false)}>
+                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <div className="p-6 flex flex-col gap-4">
+              <div>
+                <label className="block text-[9px] font-mono font-semibold tracking-[0.1em] uppercase text-white/30 mb-1.5">
+                  Title
+                </label>
+                <input
+                  className="field"
+                  value={editForm.title}
+                  onChange={e => setEditForm({ ...editForm, title: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-[9px] font-mono font-semibold tracking-[0.1em] uppercase text-white/30 mb-1.5">
+                  Description
+                </label>
+                <textarea
+                  className="field resize-y"
+                  rows={4}
+                  value={editForm.description}
+                  onChange={e => setEditForm({ ...editForm, description: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[9px] font-mono font-semibold tracking-[0.1em] uppercase text-white/30 mb-1.5">
+                    Severity
+                  </label>
+                  <select
+                    className="field select"
+                    value={editForm.severity}
+                    onChange={e => setEditForm({ ...editForm, severity: e.target.value })}
+                  >
+                    <option value="">Select…</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[9px] font-mono font-semibold tracking-[0.1em] uppercase text-white/30 mb-1.5">
+                    Status
+                  </label>
+                  <select
+                    className="field select"
+                    value={editForm.status}
+                    onChange={e => setEditForm({ ...editForm, status: e.target.value })}
+                  >
+                    <option value="">Select…</option>
+                    <option value="open">Open</option>
+                    <option value="progress">In Progress</option>
+                    <option value="resolved">Resolved</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[9px] font-mono font-semibold tracking-[0.1em] uppercase text-white/30 mb-1.5">
+                    Priority
+                  </label>
+                  <select
+                    className="field select"
+                    value={editForm.priority}
+                    onChange={e => setEditForm({ ...editForm, priority: e.target.value })}
+                  >
+                    <option value="">Select…</option>
+                    <option value="P0">P0</option>
+                    <option value="P1">P1</option>
+                    <option value="P2">P2</option>
+                    <option value="P3">P3</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[9px] font-mono font-semibold tracking-[0.1em] uppercase text-white/30 mb-1.5">
+                    Assignee
+                  </label>
+                  <select
+                    className="field select"
+                    value={editForm.assigneeId}
+                    onChange={e => setEditForm({ ...editForm, assigneeId: e.target.value })}
+                  >
+                    <option value="">Unassigned</option>
+                    {users.map(u => (
+                      <option key={u.id} value={u.id}>{u.username}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-[9px] font-mono font-semibold tracking-[0.1em] uppercase text-white/30 mb-1.5">
+                  Tags
+                </label>
+                <input
+                  className="field"
+                  value={editForm.tags}
+                  onChange={e => setEditForm({ ...editForm, tags: e.target.value })}
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button className="btn btn-ghost" onClick={() => setEditOpen(false)}>Cancel</button>
+                <button
+                  className="btn btn-primary"
+                  onClick={async () => {
+                    if (!editIssue) return;
+                    try {
+                      setBusyId(editIssue.id);
+                      setActionError('');
+                      const tags = editForm.tags
+                        .split(',')
+                        .map(t => t.trim())
+                        .filter(Boolean);
+                      await apiFetch(`/api/issues/${editIssue.id}`, {
+                        method: 'PATCH',
+                        token,
+                        body: JSON.stringify({
+                          title: editForm.title,
+                          description: editForm.description,
+                          severity: editForm.severity || undefined,
+                          status: editForm.status || undefined,
+                          priority: editForm.priority || undefined,
+                          assigneeId: editForm.assigneeId ? Number(editForm.assigneeId) : null,
+                          tags
+                        })
+                      });
+                      setEditOpen(false);
+                      setReloadTick(t => t + 1);
+                    } catch (err) {
+                      setActionError(err.message || 'Failed to update issue');
+                    } finally {
+                      setBusyId(null);
+                    }
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
